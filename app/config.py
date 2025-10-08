@@ -20,6 +20,7 @@ class Settings(BaseSettings):
         alias="OPENAI_EMBEDDING_MODEL",
     )
     openai_assistant_id: str = Field(alias="OPENAI_ASSISTANT_ID")
+    assistant_search_top_k: int = Field(default=3, alias="ASSISTANT_SEARCH_TOP_K")
 
     google_service_account_file: Optional[Path] = Field(
         default=None,
@@ -110,6 +111,9 @@ class Settings(BaseSettings):
 
         if self.google_retry_initial_delay <= 0:
             raise ValueError("GOOGLE_RETRY_INITIAL_DELAY должен быть положительным.")
+
+        if self.assistant_search_top_k <= 0:
+            raise ValueError("ASSISTANT_SEARCH_TOP_K должен быть положительным.")
 
         return self
 
