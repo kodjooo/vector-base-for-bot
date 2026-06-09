@@ -21,6 +21,16 @@ docker compose run --rm app python -m app.sync_docs --force
 
 Полная пересборка нужна после изменения логики чанкинга, метаданных или модели эмбеддингов.
 
+## Загрузка структурированного RAG-корпуса
+
+Для базы поддержки предпочтительно использовать подготовленный JSONL-корпус:
+
+```bash
+docker compose exec app python -m app.load_rag_corpus artifacts/rag_corpus/rag_chunks.jsonl
+```
+
+Команда полностью пересоздаёт коллекцию ChromaDB `CHROMA_COLLECTION_NAME`, генерирует эмбеддинги по полю `embedding_text` и сохраняет в базу компактный `answer` с метаданными. После загрузки `POST /search` и `support-bot` сразу работают с новым корпусом.
+
 ## Поиск
 
 API доступен на `POST /search`:

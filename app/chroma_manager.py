@@ -69,6 +69,35 @@ class VectorStoreGateway:
             metadatas=list(metadata_payload),
         )
 
+    def replace_corpus(
+        self,
+        *,
+        ids: Sequence[str],
+        texts: Sequence[str],
+        embeddings: Sequence[Sequence[float]],
+        metadatas: Sequence[dict],
+    ) -> None:
+        """Полностью заменяет содержимое коллекции готовым RAG-корпусом."""
+        if not texts:
+            logger.warning("Получен пустой RAG-корпус, коллекция не изменена.")
+            return
+
+        if not (len(ids) == len(texts) == len(embeddings) == len(metadatas)):
+            raise ValueError("Размеры ids, texts, embeddings и metadatas должны совпадать.")
+
+        logger.info("Пересоздание коллекции %s для RAG-корпуса.", self.settings.chroma_collection_name)
+        try:
+            self._client.delete_collection(self.settings.chroma_collection_name)
+        except Exception:  # noqa: BLE001 - разные версии Chroma возвращают разные типы ошибок.
+            logger.debug("Коллекция %s ещё не существовала.", self.settings.chroma_collection_name)
+        self._collection = self._client.get_or_create_collection(self.settings.chroma_collection_name)
+        self._collection.add(
+            ids=list(ids),
+            documents=list(texts),
+            embeddings=list(embeddings),
+            metadatas=list(metadatas),
+        )
+
     def delete_document(self, doc_id: str) -> None:
         logger.debug("Удаление документа %s из коллекции.", doc_id)
         self._get_collection().delete(where={"doc_id": doc_id})
@@ -223,11 +252,45 @@ def _extract_terms(text: str) -> list[str]:
         "какая",
         "какие",
     }
-    return [
+    extracted = [
         _normalize_term(term)
         for term in terms
-        if len(term) >= 4 and term not in stop_words
+        if (len(term) >= 4 or term in {"wb", "вб"}) and term not in stop_words
     ]
+    return _expand_query_terms(text, extracted)
+
+
+def _expand_query_terms(text: str, terms: list[str]) -> list[str]:
+    """Добавляет общеупотребимые синонимы и сокращения без привязки к одному кейсу."""
+    normalized = text.lower()
+    expanded = list(terms)
+
+    aliases = {
+        "wb": ("wildberries", "вайлдберриз"),
+        "вб": ("wildberries", "вайлдберриз"),
+        "wildberries": ("wb", "вб", "вайлдберриз"),
+        "вайлдберриз": ("wildberries", "wb", "вб"),
+        "ozon": ("озон",),
+        "озон": ("ozon",),
+    }
+    for term in terms:
+        expanded.extend(aliases.get(term, ()))
+
+    if any(marker in normalized for marker in ("не сход", "не совпад", "расхожден", "свер")):
+        expanded.extend(("сверк", "совпад", "расхожден", "задержк"))
+    if any(term.startswith("выплат") for term in terms):
+        expanded.extend(("выплат", "оплат", "перечислен", "задержк"))
+    if "отчет" in normalized or "отчёт" in normalized:
+        expanded.extend(("отчет", "отчёт", "сверк"))
+
+    deduplicated: list[str] = []
+    seen: set[str] = set()
+    for term in expanded:
+        normalized_term = _normalize_term(term)
+        if normalized_term and normalized_term not in seen:
+            seen.add(normalized_term)
+            deduplicated.append(normalized_term)
+    return deduplicated
 
 
 def _normalize_term(term: str) -> str:
@@ -282,6 +345,16 @@ def _normalize_term(term: str) -> str:
 
 def _detect_query_intent(query: str) -> str:
     normalized = query.lower()
+    reconciliation_markers = (
+        "не сход",
+        "не совпад",
+        "расхожден",
+        "свер",
+        "сравнить",
+        "почему выплаты",
+    )
+    if any(marker in normalized for marker in reconciliation_markers):
+        return "reconciliation"
     navigation_markers = (
         "где",
         "куда",
@@ -320,6 +393,8 @@ def _keyword_score(
         score += _navigation_score(text)
     elif query_intent == "instruction":
         score += _instruction_score(text)
+    elif query_intent == "reconciliation":
+        score += _reconciliation_score(text)
 
     score += _term_position_score(query_terms, text)
     if result.metadata.get("section") or result.metadata.get("title"):
@@ -377,6 +452,25 @@ def _instruction_score(text: str) -> float:
         score += 0.35
     if any(marker in text for marker in ("проверить", "выбрать", "указать", "загрузить", "добавить", "скачать")):
         score += 0.35
+    return score
+
+
+def _reconciliation_score(text: str) -> float:
+    score = 0.0
+    if any(marker in text for marker in ("свер", "сравнить", "не совпад", "расхожден")):
+        score += 0.45
+    if any(marker in text for marker in ("не совпад", "может не совпад", "не сход")):
+        score += 0.55
+    if "выплат" in text:
+        score += 0.45
+    if "сумма выплат" in text:
+        score += 0.3
+    if any(marker in text for marker in ("задержк", "период", "отчет", "отчёт")):
+        score += 0.3
+    if "задержк" in text:
+        score += 0.35
+    if any(marker in text for marker in ("wildberries", "ozon", "вайлдберриз", "озон")):
+        score += 0.2
     return score
 
 
