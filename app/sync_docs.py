@@ -93,7 +93,7 @@ class SyncOrchestrator:
         return SyncResult(doc_id=doc_id, status="updated", chunks=len(texts))
 
     def _chunk_snapshot(self, snapshot: DocumentSnapshot) -> List[str]:
-        return chunk_text(
+        return _semantic_chunks(
             snapshot.text,
             max_tokens=self.settings.embedding_chunk_size,
             overlap=self.settings.embedding_chunk_overlap,
@@ -121,6 +121,75 @@ def _infer_chunk_metadata(text: str) -> dict:
         "title": title,
         "preview": compact[:180],
     }
+
+
+def _semantic_chunks(text: str, *, max_tokens: int, overlap: int) -> List[str]:
+    """Собирает чанки по границам предложений, чтобы не начинать фрагмент с середины мысли."""
+    if not text.strip():
+        return []
+
+    units = _split_semantic_units(text)
+    if not units:
+        return chunk_text(text, max_tokens=max_tokens, overlap=overlap)
+
+    chunks: List[str] = []
+    current: list[str] = []
+    current_size = 0
+
+    for unit in units:
+        unit_size = len(unit.split())
+        if unit_size > max_tokens:
+            if current:
+                chunks.append(" ".join(current))
+                current = []
+                current_size = 0
+            chunks.extend(chunk_text(unit, max_tokens=max_tokens, overlap=overlap))
+            continue
+
+        if current and current_size + unit_size > max_tokens:
+            chunks.append(" ".join(current))
+            current = _overlap_units(current, overlap)
+            current_size = sum(len(item.split()) for item in current)
+
+        current.append(unit)
+        current_size += unit_size
+
+    if current:
+        chunks.append(" ".join(current))
+
+    return chunks
+
+
+def _split_semantic_units(text: str) -> list[str]:
+    compact = " ".join(text.split())
+    if not compact:
+        return []
+
+    protected = re.sub(
+        r"\s+(?=(Раздел|Вкладка|Таблица|Колонка|Строка|Плашка|Добавление|Загрузка|Проверка|Действия|Возвраты|Отображение|Детализация)\b)",
+        "\n",
+        compact,
+    )
+    units: list[str] = []
+    for block in protected.split("\n"):
+        parts = re.split(r"(?<=[.!?])\s+(?=[А-ЯЁA-Z0-9«])", block.strip())
+        units.extend(part.strip() for part in parts if part.strip())
+    return units
+
+
+def _overlap_units(units: list[str], overlap: int) -> list[str]:
+    if overlap <= 0:
+        return []
+
+    result: list[str] = []
+    total = 0
+    for unit in reversed(units):
+        size = len(unit.split())
+        if result and total + size > overlap:
+            break
+        result.insert(0, unit)
+        total += size
+    return result
 
 
 def main() -> None:

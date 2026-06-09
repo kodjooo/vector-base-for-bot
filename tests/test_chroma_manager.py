@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from app.chroma_manager import VectorStoreGateway
+from app.chroma_manager import SearchResult, VectorStoreGateway
 
 
 class FakeCollection:
@@ -102,3 +102,96 @@ def test_search_uses_keyword_candidates_outside_semantic_results():
     )
 
     assert result[0].text == "детализация самовыкупа показывает сумму удержаний"
+
+
+def test_navigation_intent_boosts_actionable_ui_fragments():
+    manager = VectorStoreGateway(settings=StubSettings(), client=FakeClient())
+
+    ranked = manager._rerank_results(
+        "где посмотреть себестоимость",
+        [
+            SearchResult(
+                text="Себестоимость влияет на расчет прибыли и участвует в финансовых показателях.",
+                metadata={},
+                semantic_score=0.8,
+            ),
+            SearchResult(
+                text="В разделе «Товары» нажмите на колонку «Себестоимость», откроется окно редактирования.",
+                metadata={"section": "Товары", "title": "Себестоимость"},
+                semantic_score=0.2,
+            ),
+        ],
+    )
+
+    assert ranked[0].metadata["section"] == "Товары"
+
+
+def test_instruction_intent_boosts_step_fragments():
+    manager = VectorStoreGateway(settings=StubSettings(), client=FakeClient())
+
+    ranked = manager._rerank_results(
+        "как загрузить таблицу себестоимости",
+        [
+            SearchResult(
+                text="Таблица себестоимости содержит данные о товарах и ценах.",
+                metadata={},
+                semantic_score=0.8,
+            ),
+            SearchResult(
+                text="Для загрузки таблицы необходимо скачать шаблон, заполнить файл и нажать кнопку «Загрузить таблицу».",
+                metadata={"section": "Товары", "title": "Загрузка таблицы"},
+                semantic_score=0.2,
+            ),
+        ],
+    )
+
+    assert ranked[0].metadata["title"] == "Загрузка таблицы"
+
+
+def test_rerank_prefers_early_dense_matches():
+    manager = VectorStoreGateway(settings=StubSettings(), client=FakeClient())
+
+    ranked = manager._rerank_results(
+        "где посмотреть остатки товара",
+        [
+            SearchResult(
+                text=(
+                    "Раздел содержит общую аналитику, продажи, возвраты, периоды, фильтры, "
+                    "настройки и в конце упоминает остатки товара."
+                ),
+                metadata={"section": "Дэшборд"},
+                semantic_score=0.8,
+            ),
+            SearchResult(
+                text="Остатки товара отображаются в разделе «Склад», где можно выбрать фильтр по товарам.",
+                metadata={"section": "Склад", "title": "Остатки товара"},
+                semantic_score=0.2,
+            ),
+        ],
+    )
+
+    assert ranked[0].metadata["section"] == "Склад"
+
+
+def test_rerank_returns_focused_excerpt():
+    manager = VectorStoreGateway(settings=StubSettings(), client=FakeClient())
+
+    ranked = manager._rerank_results(
+        "где посмотреть удержания",
+        [
+            SearchResult(
+                text=(
+                    "Первое предложение про общую аналитику. "
+                    "Второе предложение про настройки. "
+                    "В таблице продаж есть сумма удержаний. "
+                    "В колонке «Инфо» можно открыть детализацию. "
+                    "Последнее предложение про другой раздел."
+                ),
+                metadata={},
+                semantic_score=0.5,
+            ),
+        ],
+    )
+
+    assert "сумма удержаний" in ranked[0].text
+    assert "общую аналитику" not in ranked[0].text

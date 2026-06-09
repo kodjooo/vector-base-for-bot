@@ -5,7 +5,7 @@ from typing import Dict, List
 
 from app.embeddings import EmbeddingResult
 from app.google_docs import DocumentSnapshot
-from app.sync_docs import SyncOrchestrator
+from app.sync_docs import SyncOrchestrator, _semantic_chunks
 
 
 @dataclass
@@ -138,3 +138,17 @@ def test_sync_deletes_document_when_no_text():
     assert vector.deleted == [doc_id]
     assert not embeddings.calls
     assert docs.persisted == [(doc_id, "2024-07-01T00:00:00Z")]
+
+
+def test_semantic_chunks_keep_sentence_boundaries():
+    text = (
+        "Раздел «Дэшборд» показывает продажи и прибыль. "
+        "Строка «Удержания» раскрывается и показывает комиссию, доставку и хранение. "
+        "Вкладка «Заказы» показывает статусы заказов и детализацию."
+    )
+
+    chunks = _semantic_chunks(text, max_tokens=12, overlap=0)
+
+    assert chunks[0].startswith("Раздел «Дэшборд»")
+    assert chunks[1].startswith("Строка «Удержания»")
+    assert chunks[2].startswith("Вкладка «Заказы»")

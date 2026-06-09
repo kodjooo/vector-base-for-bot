@@ -128,14 +128,28 @@ class VectorStoreGateway:
 
     def _rerank_results(self, query: str, results: list[SearchResult]) -> list[SearchResult]:
         query_terms = _extract_terms(query)
+        query_intent = _detect_query_intent(query)
         for result in results:
             text_terms = set(_extract_terms(result.text))
-            metadata_terms = set(_extract_terms(" ".join(str(value) for value in result.metadata.values())))
-            matched = sorted({term for term in query_terms if term in text_terms or term in metadata_terms})
+            metadata_text = " ".join(
+                str(result.metadata.get(key) or "")
+                for key in ("section", "title", "preview")
+            )
+            metadata_terms = set(_extract_terms(metadata_text))
+            matched_text = {term for term in query_terms if term in text_terms}
+            matched_metadata = {term for term in query_terms if term in metadata_terms}
+            matched = sorted(matched_text | matched_metadata)
             result.matched_terms = matched
-            result.keyword_score = min(len(matched) * 0.5, 2.0)
-            result.keyword_score += _domain_boost(query_terms, result)
+            result.keyword_score = _keyword_score(
+                query_intent=query_intent,
+                query_terms=query_terms,
+                matched_text=matched_text,
+                matched_metadata=matched_metadata,
+                result=result,
+            )
             result.score = result.semantic_score + result.keyword_score
+            if matched_text:
+                result.text = _focused_excerpt(result.text, matched_text)
         return sorted(results, key=lambda item: item.score, reverse=True)
 
     def _keyword_candidates(self, *, keyword_limit: int) -> list[SearchResult]:
@@ -266,18 +280,175 @@ def _normalize_term(term: str) -> str:
     return term
 
 
-def _domain_boost(query_terms: list[str], result: SearchResult) -> float:
-    if "удержан" not in query_terms:
+def _detect_query_intent(query: str) -> str:
+    normalized = query.lower()
+    navigation_markers = (
+        "где",
+        "куда",
+        "как найти",
+        "как посмотреть",
+        "где посмотреть",
+        "где увидеть",
+        "как открыть",
+        "куда нажать",
+    )
+    if any(marker in normalized for marker in navigation_markers):
+        return "navigation"
+    if any(marker in normalized for marker in ("как", "почему", "зачем", "что делать")):
+        return "instruction"
+    return "general"
+
+
+def _keyword_score(
+    *,
+    query_intent: str,
+    query_terms: list[str],
+    matched_text: set[str],
+    matched_metadata: set[str],
+    result: SearchResult,
+) -> float:
+    if not query_terms:
         return 0.0
 
     text = result.text.lower()
-    boost = 0.0
-    if "строка «удержания" in text or "строку «удержания" in text:
-        boost += 1.2
-    if "колонка «инфо" in text or "колонке «инфо" in text:
-        boost += 1.0
-    if "детализация самовыкупа" in text or "детализации самовыкупа" in text:
-        boost += 1.0
-    if result.metadata.get("section") == "Диаграмма":
-        boost -= 0.5
-    return boost
+    matched = matched_text | matched_metadata
+    score = min(len(matched_text) * 0.45 + len(matched_metadata) * 0.25, 2.0)
+    coverage = len(matched) / len(set(query_terms))
+    score += min(coverage * 0.35, 0.35)
+
+    if query_intent == "navigation":
+        score += _navigation_score(text)
+    elif query_intent == "instruction":
+        score += _instruction_score(text)
+
+    score += _term_position_score(query_terms, text)
+    if result.metadata.get("section") or result.metadata.get("title"):
+        score += 0.15
+
+    if matched and not _has_actionable_signal(text):
+        score -= 0.25
+
+    return max(score, 0.0)
+
+
+def _navigation_score(text: str) -> float:
+    score = 0.0
+    action_markers = (
+        "нажать",
+        "нажмите",
+        "клик",
+        "при клике",
+        "открыть",
+        "откроется",
+        "перейти",
+        "выбрать",
+        "раскрыть",
+        "раскрывается",
+        "расположен",
+        "расположена",
+        "находится",
+        "отображается",
+    )
+    ui_markers = (
+        "раздел",
+        "вкладка",
+        "кнопка",
+        "колонка",
+        "строка",
+        "таблица",
+        "фильтр",
+        "иконка",
+        "плашка",
+        "правом верхнем",
+        "левом нижнем",
+    )
+    if any(marker in text for marker in action_markers):
+        score += 0.45
+    if any(marker in text for marker in ui_markers):
+        score += 0.35
+    if "инструкция" in text:
+        score += 0.15
+    return score
+
+
+def _instruction_score(text: str) -> float:
+    score = 0.0
+    if any(marker in text for marker in ("необходимо", "нужно", "важно", "для того чтобы", "после этого")):
+        score += 0.35
+    if any(marker in text for marker in ("проверить", "выбрать", "указать", "загрузить", "добавить", "скачать")):
+        score += 0.35
+    return score
+
+
+def _has_actionable_signal(text: str) -> bool:
+    return any(
+        marker in text
+        for marker in (
+            "наж",
+            "клик",
+            "откры",
+            "перей",
+            "выбер",
+            "раскр",
+            "раздел",
+            "вкладк",
+            "кнопк",
+            "колонк",
+            "строк",
+            "таблиц",
+            "фильтр",
+        )
+    )
+
+
+def _term_position_score(query_terms: list[str], text: str) -> float:
+    terms = _extract_terms(text)
+    if not terms:
+        return 0.0
+
+    positions = [
+        index
+        for index, term in enumerate(terms)
+        if term in query_terms
+    ]
+    if not positions:
+        return 0.0
+
+    first = min(positions)
+    span = max(positions) - first if len(positions) > 1 else len(terms)
+    early_score = max(0.0, 1 - first / max(len(terms), 1)) * 0.3
+    density_score = max(0.0, 1 - span / max(len(terms), 1)) * 0.25
+    return early_score + density_score
+
+
+def _focused_excerpt(text: str, matched_terms: set[str], *, max_sentences: int = 4) -> str:
+    sentences = _split_sentences(text)
+    if len(sentences) <= max_sentences:
+        return text
+
+    scored: list[tuple[int, int, str]] = []
+    for index, sentence in enumerate(sentences):
+        terms = set(_extract_terms(sentence))
+        score = len(terms & matched_terms)
+        if score:
+            scored.append((score, -index, sentence))
+
+    if not scored:
+        return " ".join(sentences[:max_sentences])
+
+    _, negative_index, _ = max(scored)
+    index = -negative_index
+    start = max(index - 1, 0)
+    end = min(start + max_sentences, len(sentences))
+    if end - start < max_sentences:
+        start = max(end - max_sentences, 0)
+    return " ".join(sentences[start:end])
+
+
+def _split_sentences(text: str) -> list[str]:
+    compact = " ".join(text.split())
+    return [
+        part.strip()
+        for part in re.split(r"(?<=[.!?])\s+(?=[А-ЯЁA-Z0-9«])", compact)
+        if part.strip()
+    ]
