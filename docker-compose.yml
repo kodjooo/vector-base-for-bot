@@ -9,6 +9,7 @@ services:
       - "8080:8080"
     volumes:
       - ./meta:/app/meta
+      - ./secrets:/secrets:ro
     depends_on:
       - chroma
     networks:
