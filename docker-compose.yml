@@ -5,27 +5,15 @@ services:
     command: python -m app.main
     env_file:
       - .env
+    ports:
+      - "8080:8080"
     volumes:
       - ./meta:/app/meta
     depends_on:
       - chroma
     networks:
       - app-net
-
-  sync:
-    build:
-      context: .
-    command: python -m app.sync_docs
-    env_file:
-      - .env
-    volumes:
-      - ./meta:/app/meta
-    depends_on:
-      - chroma
-    networks:
-      - app-net
-    profiles:
-      - sync
+    restart: unless-stopped
 
   chroma:
     image: ghcr.io/chroma-core/chroma:latest

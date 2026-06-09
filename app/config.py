@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
 
-from pydantic import AnyHttpUrl, Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,8 +19,8 @@ class Settings(BaseSettings):
         default="text-embedding-3-small",
         alias="OPENAI_EMBEDDING_MODEL",
     )
-    openai_assistant_id: str = Field(alias="OPENAI_ASSISTANT_ID")
-    assistant_search_top_k: int = Field(default=3, alias="ASSISTANT_SEARCH_TOP_K")
+    # Количество релевантных чанков, возвращаемых при поиске
+    search_top_k: int = Field(default=3, alias="SEARCH_TOP_K")
 
     google_service_account_file: Optional[Path] = Field(
         default=None,
@@ -59,11 +59,8 @@ class Settings(BaseSettings):
 
     sync_interval_minutes: int = Field(default=15, alias="SYNC_INTERVAL_MINUTES")
 
-    telegram_bot_token: SecretStr = Field(alias="TELEGRAM_BOT_TOKEN")
-    telegram_webhook_url: Optional[AnyHttpUrl] = Field(
-        default=None,
-        alias="TELEGRAM_WEBHOOK_URL",
-    )
+    # Порт HTTP API для поиска по векторной базе
+    api_port: int = Field(default=8080, alias="API_PORT")
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
@@ -79,9 +76,6 @@ class Settings(BaseSettings):
             if isinstance(value, str) and not value.strip():
                 data[key] = None
 
-        webhook = data.get("TELEGRAM_WEBHOOK_URL")
-        if isinstance(webhook, str) and not webhook.strip():
-            data["TELEGRAM_WEBHOOK_URL"] = None
         return data
 
     @model_validator(mode="after")
@@ -112,8 +106,11 @@ class Settings(BaseSettings):
         if self.google_retry_initial_delay <= 0:
             raise ValueError("GOOGLE_RETRY_INITIAL_DELAY должен быть положительным.")
 
-        if self.assistant_search_top_k <= 0:
-            raise ValueError("ASSISTANT_SEARCH_TOP_K должен быть положительным.")
+        if self.search_top_k <= 0:
+            raise ValueError("SEARCH_TOP_K должен быть положительным.")
+
+        if self.api_port <= 0 or self.api_port > 65535:
+            raise ValueError("API_PORT должен быть в диапазоне 1-65535.")
 
         return self
 
