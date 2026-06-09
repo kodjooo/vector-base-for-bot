@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     )
     # Количество релевантных чанков, возвращаемых при поиске
     search_top_k: int = Field(default=3, alias="SEARCH_TOP_K")
+    # Во сколько раз больше кандидатов брать из ChromaDB перед переранжированием
+    search_candidate_multiplier: int = Field(default=4, alias="SEARCH_CANDIDATE_MULTIPLIER")
+    # Минимальный итоговый балл после переранжирования
+    search_min_score: float = Field(default=0.05, alias="SEARCH_MIN_SCORE")
+    # Сколько документов коллекции просматривать для keyword-поиска
+    search_keyword_limit: int = Field(default=2000, alias="SEARCH_KEYWORD_LIMIT")
 
     google_service_account_file: Optional[Path] = Field(
         default=None,
@@ -30,7 +36,7 @@ class Settings(BaseSettings):
         default=None,
         alias="GOOGLE_SERVICE_ACCOUNT_INFO",
     )
-    google_doc_ids: List[str] = Field(alias="GOOGLE_DOC_IDS")
+    google_doc_ids: List[str] | str = Field(alias="GOOGLE_DOC_IDS")
     google_request_interval_seconds: float = Field(
         default=0.25,
         alias="GOOGLE_REQUEST_INTERVAL_SECONDS",
@@ -51,9 +57,9 @@ class Settings(BaseSettings):
         alias="CHROMA_COLLECTION_NAME",
     )
 
-    embedding_chunk_size: int = Field(default=800, alias="EMBEDDING_CHUNK_SIZE")
+    embedding_chunk_size: int = Field(default=350, alias="EMBEDDING_CHUNK_SIZE")
     embedding_chunk_overlap: int = Field(
-        default=100,
+        default=60,
         alias="EMBEDDING_CHUNK_OVERLAP",
     )
 
@@ -67,10 +73,6 @@ class Settings(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def _prepare_values(cls, data: dict) -> dict:
-        if "GOOGLE_DOC_IDS" in data and isinstance(data["GOOGLE_DOC_IDS"], str):
-            ids = [doc_id.strip() for doc_id in data["GOOGLE_DOC_IDS"].split(",") if doc_id.strip()]
-            data["GOOGLE_DOC_IDS"] = ids
-
         for key in ("GOOGLE_SERVICE_ACCOUNT_FILE", "GOOGLE_SERVICE_ACCOUNT_INFO"):
             value = data.get(key)
             if isinstance(value, str) and not value.strip():
@@ -87,6 +89,19 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Необходимо указать GOOGLE_SERVICE_ACCOUNT_FILE или GOOGLE_SERVICE_ACCOUNT_INFO.",
             )
+
+        if isinstance(self.google_doc_ids, str):
+            ids = self.google_doc_ids.strip()
+            if ids.startswith("[") and ids.endswith("]"):
+                ids = ids.strip("[]")
+            self.google_doc_ids = [
+                doc_id.strip().strip('"').strip("'")
+                for doc_id in ids.split(",")
+                if doc_id.strip().strip('"').strip("'")
+            ]
+
+        if not self.google_doc_ids:
+            raise ValueError("GOOGLE_DOC_IDS не может быть пустым.")
 
         if self.embedding_chunk_overlap >= self.embedding_chunk_size:
             raise ValueError("EMBEDDING_CHUNK_OVERLAP должен быть меньше EMBEDDING_CHUNK_SIZE.")
@@ -108,6 +123,15 @@ class Settings(BaseSettings):
 
         if self.search_top_k <= 0:
             raise ValueError("SEARCH_TOP_K должен быть положительным.")
+
+        if self.search_candidate_multiplier <= 0:
+            raise ValueError("SEARCH_CANDIDATE_MULTIPLIER должен быть положительным.")
+
+        if self.search_min_score < 0:
+            raise ValueError("SEARCH_MIN_SCORE не может быть отрицательным.")
+
+        if self.search_keyword_limit <= 0:
+            raise ValueError("SEARCH_KEYWORD_LIMIT должен быть положительным.")
 
         if self.api_port <= 0 or self.api_port > 65535:
             raise ValueError("API_PORT должен быть в диапазоне 1-65535.")

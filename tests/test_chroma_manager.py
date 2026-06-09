@@ -24,7 +24,17 @@ class FakeCollection:
 
     def query(self, query_embeddings, n_results):
         self.queries.append((query_embeddings, n_results))
-        return {"documents": [["пример текста"]], "distances": [[0.1]]}
+        return {
+            "documents": [["общий текст", "расшифровка удержаний в дэшборде"]],
+            "metadatas": [[{"title": "Склад"}, {"title": "Удержания"}]],
+            "distances": [[0.1, 0.3]],
+        }
+
+    def get(self, include, limit):
+        return {
+            "documents": ["детализация самовыкупа показывает сумму удержаний"],
+            "metadatas": [{"title": "Самовыкупы"}],
+        }
 
 
 class FakeClient:
@@ -65,3 +75,30 @@ def test_query_returns_payload():
 
     assert "documents" in result
     assert manager._get_collection().queries[0][1] == 2
+
+
+def test_search_boosts_exact_terms():
+    manager = VectorStoreGateway(settings=StubSettings(), client=FakeClient())
+
+    result = manager.search(
+        [0.3, 0.4],
+        query="где расшифровка удержаний",
+        limit=1,
+        candidate_limit=2,
+    )
+
+    assert result[0].text == "расшифровка удержаний в дэшборде"
+    assert result[0].matched_terms == ["расшифровк", "удержан"]
+
+
+def test_search_uses_keyword_candidates_outside_semantic_results():
+    manager = VectorStoreGateway(settings=StubSettings(), client=FakeClient())
+
+    result = manager.search(
+        [0.3, 0.4],
+        query="детализация самовыкупа удержаний",
+        limit=1,
+        candidate_limit=1,
+    )
+
+    assert result[0].text == "детализация самовыкупа показывает сумму удержаний"

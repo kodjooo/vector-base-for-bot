@@ -9,6 +9,9 @@ def _set_common_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
     monkeypatch.setenv("SEARCH_TOP_K", "3")
+    monkeypatch.setenv("SEARCH_CANDIDATE_MULTIPLIER", "4")
+    monkeypatch.setenv("SEARCH_MIN_SCORE", "0.05")
+    monkeypatch.setenv("SEARCH_KEYWORD_LIMIT", "2000")
     monkeypatch.setenv("GOOGLE_DOC_IDS", "doc-a,doc-b")
     monkeypatch.setenv("CHROMA_HOST", "chroma")
     monkeypatch.setenv("CHROMA_PORT", "8000")
@@ -36,6 +39,9 @@ def test_get_settings_reads_environment(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert settings.embedding_chunk_overlap == 100
     assert settings.api_port == 8080
     assert settings.search_top_k == 3
+    assert settings.search_candidate_multiplier == 4
+    assert settings.search_min_score == 0.05
+    assert settings.search_keyword_limit == 2000
 
 
 def test_missing_service_account_configuration(monkeypatch: pytest.MonkeyPatch) -> None:

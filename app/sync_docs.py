@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 from dataclasses import dataclass
 from typing import List
 
@@ -71,7 +72,14 @@ class SyncOrchestrator:
         embeddings = self.embedding_service.embed_texts(chunks)
         vectors = [item.embedding for item in embeddings]
         texts = [item.text for item in embeddings]
-        metadata = [{"doc_id": doc_id, "chunk": index} for index in range(len(texts))]
+        metadata = [
+            {
+                "doc_id": doc_id,
+                "chunk": index,
+                **_infer_chunk_metadata(text),
+            }
+            for index, text in enumerate(texts)
+        ]
 
         self.vector_gateway.replace_document(
             doc_id=doc_id,
@@ -97,6 +105,22 @@ def configure_logging(level: str) -> None:
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
+
+
+def _infer_chunk_metadata(text: str) -> dict:
+    """Выделяет ориентировочные заголовки для диагностики поиска."""
+    compact = " ".join(text.split())
+    section_match = re.search(r"Раздел «([^»]+)»", compact)
+    section = section_match.group(1) if section_match else ""
+
+    quoted = re.findall(r"«([^»]{3,80})»", compact[:1200])
+    title = quoted[1] if len(quoted) > 1 else (quoted[0] if quoted else section)
+
+    return {
+        "section": section,
+        "title": title,
+        "preview": compact[:180],
+    }
 
 
 def main() -> None:

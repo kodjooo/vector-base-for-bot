@@ -113,6 +113,8 @@ def test_sync_updates_document_and_stores_metadata():
     payload = vector.replacements[0]
     assert payload["doc_id"] == doc_id
     assert payload["metadatas"][0]["doc_id"] == doc_id
+    assert "section" in payload["metadatas"][0]
+    assert "title" in payload["metadatas"][0]
 
 
 def test_sync_deletes_document_when_no_text():

@@ -42,6 +42,7 @@
 - В support-bot создан `app/ai/vector_client.py` (httpx-клиент к /search).
 - В support-bot обновлён `app/bot/processor.py`: перед вызовом OpenAI запрашиваются чанки из векторной базы и добавляются в контекст.
 - Обновлены `.env`, `.env.example`, `docker-compose.yml`, `requirements.txt` в обоих проектах.
+- Доработка качества поиска — выполнено: `/search` возвращает подробные `results` с metadata/distance/score, добавлен keyword-rerank поверх кандидатов ChromaDB, support-bot логирует найденные результаты и ограничивает ответ только подтверждённым контекстом.
 
 Этап 8. Эксплуатационные задачи
 - Подготовить инструкции по развёртыванию и эксплуатации в `README.md`.

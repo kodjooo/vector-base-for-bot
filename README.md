@@ -1,36 +1,48 @@
-# Стартовый шаблон: Python в Docker
+# Vector Base for Bot
 
-Этот проект — минимальный каркас контейнеризованного приложения на Python. Его можно использовать как основу для CLI-утилит, сервисов, фоновых задач или веб-приложений.
+Сервис синхронизирует Google Docs в ChromaDB и отдаёт релевантные фрагменты через HTTP API для `support-bot`.
 
-## Структура проекта
-
-- `app/` — исходный код приложения (точка входа `app/main.py`).
-- `requirements.txt` — список зависимостей (по умолчанию пустой, добавляйте свои).
-- `Dockerfile` — инструкция для сборки контейнера.
-- `.dockerignore` — исключения при сборке образа.
-
-## Запуск локально (без Docker)
+## Запуск
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-python -m app.main
+cp .env.example .env
+docker compose up -d --build
 ```
 
-## Сборка и запуск в Docker
+В `.env` нужно указать `OPENAI_API_KEY`, путь к сервисному аккаунту Google в `GOOGLE_SERVICE_ACCOUNT_FILE` и список документов `GOOGLE_DOC_IDS`. Файл сервисного аккаунта должен быть доступен контейнеру по пути, указанному в `docker-compose.yml`.
+
+## Синхронизация
+
+Плановая синхронизация запускается внутри `app` по `SYNC_INTERVAL_MINUTES`. Для ручной полной пересборки индекса:
 
 ```bash
-# Сборка образа
-docker build -t python-starter .
-
-# Запуск контейнера
-docker run --rm python-starter
+docker compose run --rm app python -m app.sync_docs --force
 ```
 
-## Дальнейшие шаги
+Полная пересборка нужна после изменения логики чанкинга, метаданных или модели эмбеддингов.
 
-1. Добавьте зависимости в `requirements.txt` и пересоберите образ.
-2. Расширяйте модуль `app/main.py` или создавайте дополнительные пакеты/модули.
-3. По мере роста проекта добавьте тесты и инструменты качества кода по своему выбору.
+## Поиск
+
+API доступен на `POST /search`:
+
+```bash
+curl -sS -X POST http://localhost:8080/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"Где увидеть расшифровку удержаний?","top_k":3}'
+```
+
+Ответ содержит `chunks` для обратной совместимости и подробные `results` с `metadata`, `distance`, `score`, `semantic_score`, `keyword_score`, `matched_terms`.
+
+Параметры качества поиска:
+
+- `SEARCH_TOP_K` — сколько фрагментов вернуть.
+- `SEARCH_CANDIDATE_MULTIPLIER` — сколько кандидатов взять из ChromaDB перед переранжированием.
+- `SEARCH_MIN_SCORE` — минимальный итоговый балл результата.
+- `SEARCH_KEYWORD_LIMIT` — сколько чанков просматривать для точного keyword-поиска.
+
+## Проверка
+
+```bash
+docker compose run --rm app pytest
+docker compose logs -f app
+```
